@@ -96,6 +96,11 @@ func AllSecretMatchers() []SecretMatcher {
 		firebaseMatcher(),
 		githubKeyMatcher(),
 
+		// data-driven, high-precision matcher covering ~40 modern
+		// token formats (Stripe, Slack, GitLab, OpenAI, private keys,
+		// JWTs, DB connection strings, etc). See secret-patterns.go
+		patternSecretMatcher(),
+
 		// REACT_APP_... containing objects
 		{"(object) @matches", func(n *Node) *Secret {
 

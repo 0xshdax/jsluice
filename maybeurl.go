@@ -47,10 +47,11 @@ func MaybeURL(in string) bool {
 		return false
 	}
 
-	// Valid-scheme?
+	// Valid-scheme? WebSocket URLs (ws and wss) are as interesting
+	// to us as http and https ones.
 	if u.Scheme != "" {
 		s := strings.ToLower(u.Scheme)
-		if s != "http" && s != "https" {
+		if s != "http" && s != "https" && s != "ws" && s != "wss" {
 			return false
 		}
 	}

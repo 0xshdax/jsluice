@@ -48,11 +48,14 @@ type options struct {
 }
 
 const (
-	modeURLs    = "urls"
-	modeSecrets = "secrets"
-	modeTree    = "tree"
-	modeQuery   = "query"
-	modeFormat  = "format"
+	modeURLs        = "urls"
+	modeSecrets     = "secrets"
+	modeTree        = "tree"
+	modeQuery       = "query"
+	modeFormat      = "format"
+	modeSinks       = "sinks"
+	modePostMessage = "postmessage"
+	modeSourceMaps  = "sourcemaps"
 )
 
 type stringSlice []string
@@ -81,11 +84,14 @@ func init() {
 			"  jsluice <mode> [options] [file...]",
 			"",
 			"Modes:",
-			"  urls      Extract URLs and paths",
-			"  secrets   Extract secrets and other interesting bits",
-			"  tree      Print syntax trees for input files",
-			"  query     Run tree-sitter a query against input files",
-			"  format    Format JavaScript source using jsbeautifier-go",
+			"  urls         Extract URLs and paths",
+			"  secrets      Extract secrets and other interesting bits",
+			"  tree         Print syntax trees for input files",
+			"  query        Run tree-sitter a query against input files",
+			"  format       Format JavaScript source using jsbeautifier-go",
+			"  sinks        Find DOM-XSS sinks (innerHTML, eval, document.write...) and flag tainted ones",
+			"  postmessage  Find postMessage listeners/senders, missing origin checks and sinks",
+			"  sourcemaps   Recover source map references and URLs found in comments",
 			"",
 			"Global options:",
 			"  -c, --concurrency int        Number of files to process concurrently (default 1)",
@@ -199,11 +205,14 @@ func main() {
 	// now the process workers
 	var modeFn cmdFn
 	modes := map[string]cmdFn{
-		modeURLs:    extractURLs,
-		modeSecrets: extractSecrets,
-		modeTree:    printTree,
-		modeQuery:   runQuery,
-		modeFormat:  format,
+		modeURLs:        extractURLs,
+		modeSecrets:     extractSecrets,
+		modeTree:        printTree,
+		modeQuery:       runQuery,
+		modeFormat:      format,
+		modeSinks:       extractSinks,
+		modePostMessage: extractPostMessage,
+		modeSourceMaps:  extractSourceMaps,
 	}
 
 	if _, exists := modes[mode]; !exists {

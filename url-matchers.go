@@ -99,7 +99,7 @@ func (a *Analyzer) GetURLs() []*URL {
 	}
 
 	// find the nodes we need in the the tree and run the enter function for every node
-	a.Query("[(assignment_expression) (call_expression) (string)] @matches", enter)
+	a.Query("[(assignment_expression) (call_expression) (new_expression) (string)] @matches", enter)
 
 	return matches
 }
@@ -119,7 +119,8 @@ func unique[T comparable](items []T) []T {
 }
 
 // A URLMatcher has a type of thing it matches against (e.g. assignment_expression),
-// and a function to actually do the matching and producing of the *URL
+// and a function to actually do the matching and producing of the *URL. The type
+// can be one of string, assignment_expression, call_expression, or new_expression.
 type URLMatcher struct {
 	Type string
 	Fn   func(*Node) *URL
@@ -320,5 +321,19 @@ func AllURLMatchers() []URLMatcher {
 		}},
 	}
 
-	return matchers
+	// The modern matchers know about specific APIs, so they go ahead of the
+	// last two matchers: the generic "other function calls" matcher, and the
+	// string literal matcher, which must stay last. Duplicates are dropped by
+	// keeping the first match for a URL, so the matchers that provide the most
+	// context need to come first. If the generic matcher came first it would
+	// shadow, for example, the query parameters found for axios.get().
+	modern := modernURLMatchers()
+	tail := matchers[len(matchers)-2:]
+
+	all := make([]URLMatcher, 0, len(matchers)+len(modern))
+	all = append(all, matchers[:len(matchers)-2]...)
+	all = append(all, modern...)
+	all = append(all, tail...)
+
+	return all
 }

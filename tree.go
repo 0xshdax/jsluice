@@ -189,9 +189,60 @@ func (n *Node) CollapsedString() string {
 		)
 	case "string":
 		return n.RawString()
+	case "template_string":
+		return urlmodCollapseTemplate(n)
 	default:
 		return ExpressionPlaceholder
 	}
+}
+
+// urlmodCollapseTemplate collapses a template literal in the same way that
+// CollapsedString collapses string concatenations: each ${...} substitution
+// is replaced with ExpressionPlaceholder, so that:
+//
+//	`/api/v2/${id}/x?q=${f(s)}`
+//
+// Becomes:
+//
+//	/api/v2/EXPR/x?q=EXPR
+//
+// Tree-sitter does not expose the literal text chunks of a template_string as
+// children (only the backticks, the template_substitution nodes and any
+// escape_sequence nodes), so the value is rebuilt from the raw source of the
+// node with the byte span of every substitution replaced by the placeholder.
+// As with ordinary strings, escape sequences are left undecoded and the
+// surrounding backticks are removed.
+func urlmodCollapseTemplate(n *Node) string {
+	start := n.node.StartByte()
+	raw := n.Content()
+
+	var b strings.Builder
+	var pos uint32
+
+	for _, c := range n.NamedChildren() {
+		if c.Type() != "template_substitution" {
+			continue
+		}
+
+		// Spans are relative to the start of the template_string. The
+		// bounds checks are purely defensive; children always sit inside
+		// their parent and never overlap.
+		if c.node.StartByte() < start {
+			continue
+		}
+		s, e := c.node.StartByte()-start, c.node.EndByte()-start
+		if s < pos || e < s || e > uint32(len(raw)) {
+			continue
+		}
+
+		b.WriteString(raw[pos:s])
+		b.WriteString(ExpressionPlaceholder)
+		pos = e
+	}
+	b.WriteString(raw[pos:])
+
+	out := strings.TrimPrefix(b.String(), "`")
+	return strings.TrimSuffix(out, "`")
 }
 
 // IsValid returns true if the *Node and the underlying

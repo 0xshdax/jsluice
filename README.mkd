@@ -3,7 +3,11 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/BishopFox/jsluice.svg)](https://pkg.go.dev/github.com/BishopFox/jsluice)
 
 `jsluice` is a Go package and [command-line tool](/cmd/jsluice/) for extracting URLs, paths, secrets,
-and other interesting data from JavaScript source code.
+DOM-XSS sinks, `postMessage` handlers, source-map references, and other interesting data from
+JavaScript source code.
+
+> **This fork** extends upstream `jsluice` with modern analysis passes that are useful when reviewing
+> today's JavaScript. See [What's new in this fork](#whats-new-in-this-fork) for the summary.
 
 If you want to do those things right away: look at the [command-line tool](/cmd/jsluice/).
 
@@ -204,3 +208,80 @@ Running the example:
 Because we have a syntax tree available for the entire JavaScript source,
 it was possible to inspect both the `key` and `value`, and also to easily
 provide the parent object as context for the match.
+
+This fork adds ~40 high-precision built-in secret matchers on top of the originals, covering formats
+such as Stripe, Slack, GitLab, SendGrid, Twilio, npm, Shopify, DigitalOcean, OpenAI/Anthropic,
+Postman, Figma, Linear, Notion, private keys, JWTs, and database connection strings. Every matcher is
+anchored to a distinctive prefix or structure (there is no bare-entropy matching), so the
+false-positive rate stays low. The `Kind` of each finding names the format, e.g. `stripeSecretKey`.
+
+## What's new in this fork
+
+All of the following is additive — existing modes, output formats, and the package API are unchanged.
+
+- **Modern URL extraction.** URLs built with ES6 **template literals** (`` fetch(`/api/${id}`) ``) are
+  now resolved, with substitutions collapsed to `EXPR` just like string concatenation. New matchers
+  cover `axios` (all call styles, including config objects), `new WebSocket` / `EventSource` /
+  `Request`, `navigator.sendBeacon`, dynamic `import()`, `importScripts`, and Angular `HttpClient`.
+  `ws://` and `wss://` URLs are recognised.
+- **~40 built-in secret matchers** for modern token formats (see above).
+- **`sinks` mode** — find DOM-XSS sinks and flag the ones that look attacker-controlled.
+- **`postmessage` mode** — find `postMessage` listeners that don't validate the sender origin.
+- **`sourcemaps` mode** — recover source-map references and URLs left in comments.
+
+Each new mode is exposed on the package `Analyzer` too: `GetSinks()`, `GetMessageListeners()`,
+`GetSourceMaps()`, and `GetCommentURLs()`.
+
+## Finding DOM XSS Sinks
+
+The `sinks` mode reports dangerous DOM sinks (`innerHTML`, `document.write`, `eval`, `setTimeout`
+with a string argument, `insertAdjacentHTML`, `dangerouslySetInnerHTML`, ...) and marks a finding as
+`tainted` when the value reaching the sink references an attacker-controllable source such as
+`location.hash`, `location.search`, `document.referrer`, `window.name`, or `URLSearchParams`.
+
+```
+▶ echo 'el.innerHTML = location.hash; eval(data);' | jsluice sinks -j
+{"kind":"innerHTML","severity":"high","tainted":true,"taint":"location.hash","line":1,"source":"el.innerHTML = location.hash", ...}
+{"kind":"eval","severity":"medium","tainted":false,"line":1,"source":"eval(data)", ...}
+```
+
+Tainted sinks are the high-signal ones; filter to just those with `jq`:
+
+```
+▶ jsluice sinks app.js | jq 'select(.tainted)'
+```
+
+## Analyzing postMessage Handlers
+
+The `postmessage` mode finds `message` event listeners (`addEventListener("message", ...)` and
+`window.onmessage = ...`, resolving handlers passed by reference) and reports whether each one
+validates `event.origin`, together with any dangerous sinks the handler passes the message data into.
+It also flags `postMessage(data, "*")` sends to a wildcard origin.
+
+```
+▶ cat handlers.js
+window.addEventListener("message", e => { frame.innerHTML = e.data; });
+window.addEventListener("message", e => { if (e.origin !== "https://trusted.example") return; render(e.data); });
+
+▶ jsluice postmessage handlers.js
+{"kind":"addEventListener","originChecked":false,"severity":"high","sinks":["innerHTML"],"line":1, ...}
+{"kind":"addEventListener","originChecked":true,"severity":"low","line":2, ...}
+```
+
+A listener that skips the origin check **and** feeds the data into an exec/HTML sink is `high`; no
+origin check without such a sink is `medium`; an origin-validated listener is `low`.
+
+## Recovering Source Maps
+
+The `sourcemaps` mode extracts `//# sourceMappingURL=` / `//@ sourceMappingURL=` references —
+including inline `data:` maps and the trailing, no-newline form common in minified bundles — plus any
+URLs found in comments. With `-R` it resolves relative map references against an absolute URL.
+
+```
+▶ echo '//# sourceMappingURL=/static/js/main.4f2a.js.map' | jsluice sourcemaps -j
+{"kind":"sourceMappingURL","url":"/static/js/main.4f2a.js.map","inline":false,"line":1, ...}
+
+▶ jsluice sourcemaps -R https://example.com/static/js/main.js app.js
+```
+
+Recovering a referenced `.map` often yields the application's original, unminified source.
